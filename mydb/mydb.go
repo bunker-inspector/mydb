@@ -1,8 +1,11 @@
+// Package mydb provides a load-balancing, error tolerant wrapper around
+// the standard sql.DB
 package mydb
 
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sync"
 	"time"
 
@@ -30,11 +33,21 @@ type DatabaseClient interface {
 
 type DBConfig struct {
 	ConnectionTimeout time.Duration
+
+	// How many events a circuit breaker will keep in its result history
+	// to determine its status
+	CBResultWindowSize uint
+
+	// Threshold at which circuit breakers will enter the half-open state
+	CBHalfOpenThreshold uint
+
+	// Threshold at at which circuit breakers will enter the open state
+	CBOpenThreshold uint
 }
 
 type DB struct {
-	master       DatabaseClient
-	readreplicas []DatabaseClient
+	master       *masterCBDB
+	replicas     []*replicaCBDB
 	config       DBConfig
 	replicamutex sync.Mutex
 }
@@ -44,38 +57,58 @@ func New(master *sql.DB, readreplicas ...*sql.DB) *DB {
 	// and we want to prove that check at compile time, which the go compiler would not allow
 	// where it defined as []DatabseClient but we want to be able to apply simple mocks for
 	// testing and in the scope of this library, we aren't interested in the actual backend
-	var convertedReplicas []DatabaseClient
+	var convertedReplicas []*replicaCBDB
 	for _, replica := range readreplicas {
-		convertedReplicas = append(convertedReplicas, DatabaseClient(replica))
+		asCircuitBreaker := newReplicaCBDB(replica)
+		convertedReplicas = append(convertedReplicas, asCircuitBreaker)
 	}
 	db := &DB{
-		master: DatabaseClient(master),
+		master: newMasterCBDB(master),
 		config: DBConfig{
 			ConnectionTimeout: 5 * time.Second,
 		},
-		readreplicas: convertedReplicas,
+		replicas: convertedReplicas,
 	}
 	return db
 }
 
-// WithConfig sets the config for the client
-func (db *DB) WithConfig(config DBConfig) *DB {
+// ApplyConfig sets the config for the client.
+func (db *DB) ApplyConfig(config DBConfig) error {
+	if config.CBResultWindowSize <= 2 {
+		return fmt.Errorf("Cannot apply configuration. The minumum window size is 2 (which is still not really useful)")
+	}
+	if config.CBOpenThreshold > config.CBResultWindowSize {
+		return fmt.Errorf("Cannot apply configuration. The result window size must be at least equal to the open threshold.")
+	}
+	if config.CBHalfOpenThreshold >= config.CBOpenThreshold {
+		return fmt.Errorf("Cannot apply configuration. The open must be greater than the half-open threshold.")
+	}
+
 	db.config = config
-	return db
+	db.master.ApplyConfig(config)
+
+	for _, replica := range db.replicas {
+		replica.ApplyConfig(config)
+	}
+
+	return nil
 }
 
 func (db *DB) readReplicaRoundRobin() DatabaseClient {
 	db.replicamutex.Lock()
 	defer db.replicamutex.Unlock()
 
-	if len(db.readreplicas) == 0 {
-		// Use master to read if no replicas are available
-		return db.master
+	// take first ready replica
+	for i := 0; i < len(db.replicas); i++ {
+		if replica := db.replicas[0].GetIfReady(); replica != nil {
+			db.replicas = append(db.replicas[1:], db.replicas[0])
+			return replica
+		}
+		db.replicas = append(db.replicas[1:], db.replicas[0])
 	}
 
-	next := db.readreplicas[0]
-	db.readreplicas = append(db.readreplicas[1:], next)
-	return next
+	// Use master to read if no replicas are available
+	return db.master
 }
 
 func (db *DB) Ping() error {
@@ -83,8 +116,8 @@ func (db *DB) Ping() error {
 		panic(err)
 	}
 
-	for i := range db.readreplicas {
-		if err := db.readreplicas[i].Ping(); err != nil {
+	for i := range db.replicas {
+		if err := db.replicas[i].Ping(); err != nil {
 			panic(err)
 		}
 	}
@@ -97,8 +130,8 @@ func (db *DB) PingContext(ctx context.Context) error {
 		logrus.Warn("Master instance unavailable. Attempting to reconnect...\n")
 	}
 
-	for i := range db.readreplicas {
-		if err := db.readreplicas[i].PingContext(ctx); err != nil {
+	for i := range db.replicas {
+		if err := db.replicas[i].PingContext(ctx); err != nil {
 			logrus.Warnf("Replica instance %d unavailable. Attempting to reconnect...\n", i)
 		}
 	}
@@ -132,7 +165,7 @@ func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 
 func (db *DB) Close() error {
 	db.master.Close()
-	for _, replica := range db.readreplicas {
+	for _, replica := range db.replicas {
 		replica.Close()
 	}
 	return nil
@@ -156,21 +189,21 @@ func (db *DB) PrepareContext(ctx context.Context, query string) (*sql.Stmt, erro
 
 func (db *DB) SetConnMaxLifetime(d time.Duration) {
 	db.master.SetConnMaxLifetime(d)
-	for i := range db.readreplicas {
-		db.readreplicas[i].SetConnMaxLifetime(d)
+	for i := range db.replicas {
+		db.replicas[i].SetConnMaxLifetime(d)
 	}
 }
 
 func (db *DB) SetMaxIdleConns(n int) {
 	db.master.SetMaxIdleConns(n)
-	for i := range db.readreplicas {
-		db.readreplicas[i].SetMaxIdleConns(n)
+	for i := range db.replicas {
+		db.replicas[i].SetMaxIdleConns(n)
 	}
 }
 
 func (db *DB) SetMaxOpenConns(n int) {
 	db.master.SetMaxOpenConns(n)
-	for i := range db.readreplicas {
-		db.readreplicas[i].SetMaxOpenConns(n)
+	for i := range db.replicas {
+		db.replicas[i].SetMaxOpenConns(n)
 	}
 }

@@ -3,7 +3,6 @@ package mydb
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -45,12 +44,17 @@ func newMyDBMock(numreplicas int) (*DB, sqlmock.Sqlmock, []sqlmock.Sqlmock) {
 }
 
 func newWithGeneric(master DatabaseClient, readreplicas ...DatabaseClient) *DB {
+	var convertedReplicas []*replicaCBDB
+	for _, replica := range readreplicas {
+		asCircuitBreaker := newReplicaCBDB(replica)
+		convertedReplicas = append(convertedReplicas, asCircuitBreaker)
+	}
 	db := &DB{
-		master: master,
+		master: newMasterCBDB(master),
 		config: DBConfig{
 			ConnectionTimeout: 5 * time.Second,
 		},
-		readreplicas: readreplicas,
+		replicas: convertedReplicas,
 	}
 	return db
 }
