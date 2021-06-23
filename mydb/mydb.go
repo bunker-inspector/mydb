@@ -113,12 +113,12 @@ func (db *DB) readReplicaRoundRobin() DatabaseClient {
 
 func (db *DB) Ping() error {
 	if err := db.master.Ping(); err != nil {
-		panic(err)
+		logrus.Warn("Master instance unavailable. Attempting to reconnect...\n")
 	}
 
 	for i := range db.replicas {
 		if err := db.replicas[i].Ping(); err != nil {
-			panic(err)
+			logrus.Warnf("Replica instance %d unavailable. Attempting to reconnect...\n", i)
 		}
 	}
 
