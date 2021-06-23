@@ -12,7 +12,7 @@ import (
 // masterCBDB is a circuit breaking DatabaseClient
 // that knows it is not a member of a group
 type masterCBDB struct {
-	DatabaseClient
+	db      DatabaseClient
 	tracker *statustracker.StatusTracker
 	skip    uint
 	mux     sync.Mutex
@@ -63,51 +63,143 @@ func (r *replicaCBDB) GetIfReady() *replicaCBDB {
 	return nil
 }
 
+// Master Circuit Breaker impl
+
+func (m *masterCBDB) Ping() error {
+	e := m.db.Ping()
+	m.tracker.ReportResult(e == nil)
+	return e
+}
+
+func (m *masterCBDB) PingContext(ctx context.Context) error {
+	e := m.db.PingContext(ctx)
+	m.tracker.ReportResult(e == nil)
+	return e
+}
+
+func (m *masterCBDB) Query(query string, args ...interface{}) (*sql.Rows, error) {
+	rows, e := m.db.Query(query, args...)
+	m.tracker.ReportResult(e == nil)
+	return rows, e
+}
+
+func (m *masterCBDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	rows, e := m.db.QueryContext(ctx, query, args...)
+	m.tracker.ReportResult(e == nil)
+	return rows, e
+}
+
+func (m *masterCBDB) QueryRow(query string, args ...interface{}) *sql.Row {
+	row := m.db.QueryRow(query, args...)
+	m.tracker.ReportResult(row.Err() == nil)
+	return row
+}
+
+func (m *masterCBDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	rows := m.db.QueryRowContext(ctx, query, args...)
+	m.tracker.ReportResult(rows.Err() == nil)
+	return rows
+}
+
+func (m *masterCBDB) Begin() (*sql.Tx, error) {
+	tx, e := m.db.Begin()
+	m.tracker.ReportResult(e == nil)
+	return tx, e
+}
+
+func (m *masterCBDB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	tx, e := m.db.BeginTx(ctx, opts)
+	m.tracker.ReportResult(e == nil)
+	return tx, e
+}
+
+func (m *masterCBDB) Close() error {
+	return m.db.Close()
+}
+
+func (m *masterCBDB) Exec(query string, args ...interface{}) (sql.Result, error) {
+	result, e := m.db.Exec(query, args...)
+	m.tracker.ReportResult(e == nil)
+	return result, e
+}
+
+func (m *masterCBDB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	result, e := m.db.ExecContext(ctx, query, args...)
+	m.tracker.ReportResult(e == nil)
+	return result, e
+}
+
+func (m *masterCBDB) Prepare(query string) (*sql.Stmt, error) {
+	stmt, e := m.db.Prepare(query)
+	m.tracker.ReportResult(e == nil)
+	return stmt, e
+}
+
+func (m *masterCBDB) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	stmt, e := m.db.PrepareContext(ctx, query)
+	m.tracker.ReportResult(e == nil)
+	return stmt, e
+}
+
+func (m *masterCBDB) SetConnMaxLifetime(d time.Duration) {
+	m.db.SetConnMaxLifetime(d)
+}
+
+func (m *masterCBDB) SetMaxIdleConns(n int) {
+	m.db.SetMaxIdleConns(n)
+}
+
+func (m *masterCBDB) SetMaxOpenConns(n int) {
+	m.db.SetMaxOpenConns(n)
+}
+
+// Replica Circuit Breaker impl
+
 func (r *replicaCBDB) Ping() error {
 	e := r.db.Ping()
-	r.tracker.ReportStatus(e == nil)
+	r.tracker.ReportResult(e == nil)
 	return e
 }
 
 func (r *replicaCBDB) PingContext(ctx context.Context) error {
 	e := r.db.PingContext(ctx)
-	r.tracker.ReportStatus(e == nil)
+	r.tracker.ReportResult(e == nil)
 	return e
 }
 
 func (r *replicaCBDB) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	rows, e := r.db.Query(query, args...)
-	r.tracker.ReportStatus(e == nil)
+	r.tracker.ReportResult(e == nil)
 	return rows, e
 }
 
 func (r *replicaCBDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	rows, e := r.db.QueryContext(ctx, query, args...)
-	r.tracker.ReportStatus(e == nil)
+	r.tracker.ReportResult(e == nil)
 	return rows, e
 }
 
 func (r *replicaCBDB) QueryRow(query string, args ...interface{}) *sql.Row {
 	row := r.db.QueryRow(query, args...)
-	r.tracker.ReportStatus(row.Err() == nil)
+	r.tracker.ReportResult(row.Err() == nil)
 	return row
 }
 
 func (r *replicaCBDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
 	rows := r.db.QueryRowContext(ctx, query, args...)
-	r.tracker.ReportStatus(rows.Err() == nil)
+	r.tracker.ReportResult(rows.Err() == nil)
 	return rows
 }
 
 func (r *replicaCBDB) Begin() (*sql.Tx, error) {
 	tx, e := r.db.Begin()
-	r.tracker.ReportStatus(e == nil)
+	r.tracker.ReportResult(e == nil)
 	return tx, e
 }
 
 func (r *replicaCBDB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
 	tx, e := r.db.BeginTx(ctx, opts)
-	r.tracker.ReportStatus(e == nil)
+	r.tracker.ReportResult(e == nil)
 	return tx, e
 }
 
@@ -117,25 +209,25 @@ func (r *replicaCBDB) Close() error {
 
 func (r *replicaCBDB) Exec(query string, args ...interface{}) (sql.Result, error) {
 	result, e := r.db.Exec(query, args...)
-	r.tracker.ReportStatus(e == nil)
+	r.tracker.ReportResult(e == nil)
 	return result, e
 }
 
 func (r *replicaCBDB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	result, e := r.db.ExecContext(ctx, query, args...)
-	r.tracker.ReportStatus(e == nil)
+	r.tracker.ReportResult(e == nil)
 	return result, e
 }
 
 func (r *replicaCBDB) Prepare(query string) (*sql.Stmt, error) {
 	stmt, e := r.db.Prepare(query)
-	r.tracker.ReportStatus(e == nil)
+	r.tracker.ReportResult(e == nil)
 	return stmt, e
 }
 
 func (r *replicaCBDB) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
 	stmt, e := r.db.PrepareContext(ctx, query)
-	r.tracker.ReportStatus(e == nil)
+	r.tracker.ReportResult(e == nil)
 	return stmt, e
 }
 
