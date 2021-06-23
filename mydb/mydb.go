@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"go.uber.org/multierr"
 )
 
 type DatabaseClient interface {
@@ -112,26 +113,32 @@ func (db *DB) readReplicaRoundRobin() DatabaseClient {
 }
 
 func (db *DB) Ping() error {
-	if err := db.master.Ping(); err != nil {
+	var err error
+	if pingerr := db.master.Ping(); err != nil {
+		err = multierr.Append(err, pingerr)
 		logrus.Warn("Master instance unavailable. Attempting to reconnect...\n")
 	}
 
 	for i := range db.replicas {
-		if err := db.replicas[i].Ping(); err != nil {
+		if pingerr := db.replicas[i].Ping(); err != nil {
+			err = multierr.Append(err, pingerr)
 			logrus.Warnf("Replica instance %d unavailable. Attempting to reconnect...\n", i)
 		}
 	}
 
-	return nil
+	return err
 }
 
 func (db *DB) PingContext(ctx context.Context) error {
-	if err := db.master.PingContext(ctx); err != nil {
+	var err error
+	if pingerr := db.master.PingContext(ctx); err != nil {
+		err = multierr.Append(err, pingerr)
 		logrus.Warn("Master instance unavailable. Attempting to reconnect...\n")
 	}
 
 	for i := range db.replicas {
-		if err := db.replicas[i].PingContext(ctx); err != nil {
+		if pingerr := db.replicas[i].PingContext(ctx); err != nil {
+			err = multierr.Append(err, pingerr)
 			logrus.Warnf("Replica instance %d unavailable. Attempting to reconnect...\n", i)
 		}
 	}
