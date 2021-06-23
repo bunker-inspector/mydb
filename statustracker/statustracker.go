@@ -1,6 +1,8 @@
 package statustracker
 
-import "sync"
+import (
+	"sync"
+)
 
 type CircuitBreakerStatus int
 
@@ -21,14 +23,29 @@ type StatusTracker struct {
 }
 
 func NewStatusTracker() *StatusTracker {
+	successes := make([]bool, 10)
+	for i := range successes {
+		successes[i] = true
+	}
+
 	return &StatusTracker{
 		0,
-		make([]bool, 10),
+		successes,
 		5,
 		7,
 		Closed,
 		sync.Mutex{},
 	}
+}
+
+func (t *StatusTracker) ReportStatus(success bool) {
+	t.mux.Lock()
+	defer t.mux.Unlock()
+	if !t.results[0] {
+		t.failures--
+	}
+	t.results = append(t.results[1:], success)
+	t.UpdateStatus()
 }
 
 func (t *StatusTracker) UpdateStatus() {

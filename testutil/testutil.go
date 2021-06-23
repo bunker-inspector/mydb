@@ -7,21 +7,37 @@ import (
 
 type QueryCounterDBMock struct {
 	*sql.DB
-	count uint
-	mux   sync.Mutex
+	ecount uint
+	qcount uint
+	mux    sync.Mutex
 }
 
-func NewQueryCounter() *QueryCounterDBMock {
+func NewQueryCounterDBMock() *QueryCounterDBMock {
 	return &QueryCounterDBMock{}
+}
+
+func (db *QueryCounterDBMock) Exec(query string, args ...interface{}) (sql.Result, error) {
+	db.mux.Lock()
+	defer db.mux.Unlock()
+	db.ecount++
+	return nil, nil
 }
 
 func (db *QueryCounterDBMock) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	db.mux.Lock()
 	defer db.mux.Unlock()
-	db.count++
+	db.qcount++
 	return nil, nil
 }
 
-func (db *QueryCounterDBMock) GetCount() uint {
-	return db.count
+func (db *QueryCounterDBMock) GetQueryCount() uint {
+	return db.qcount
+}
+
+func (db *QueryCounterDBMock) GetExecCount() uint {
+	return db.ecount
+}
+
+func (db *QueryCounterDBMock) Ping() error {
+	return nil
 }

@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/m-rec/08647c57124934494b415428d23b56b52f043339/testutil"
 )
 
@@ -31,16 +30,16 @@ var _ interface {
 	SetMaxOpenConns(n int)
 } = New((*sql.DB)(nil), []*sql.DB{}...)
 
-func newMyDBMock(numreplicas int) (*DB, sqlmock.Sqlmock, []sqlmock.Sqlmock) {
-	masterdb, mastermock, _ := sqlmock.New()
-	var replicas []*sql.DB
-	var replicamocks []sqlmock.Sqlmock
+func newMyDBCounterMock(numreplicas int) (*DB, *testutil.QueryCounterDBMock, []*testutil.QueryCounterDBMock) {
+	masterdb := testutil.NewQueryCounterDBMock()
+	var asInterface []DatabaseClient
+	var replicas []*testutil.QueryCounterDBMock
 	for i := 0; i < numreplicas; i++ {
-		db, mock, _ := sqlmock.New()
-		replicas = append(replicas, db)
-		replicamocks = append(replicamocks, mock)
+		mock := testutil.NewQueryCounterDBMock()
+		asInterface = append(asInterface, DatabaseClient(mock))
+		replicas = append(replicas, mock)
 	}
-	return New(masterdb, replicas...), mastermock, replicamocks
+	return newWithGeneric(masterdb, asInterface...), masterdb, replicas
 }
 
 func newWithGeneric(master DatabaseClient, readreplicas ...DatabaseClient) *DB {
@@ -60,37 +59,31 @@ func newWithGeneric(master DatabaseClient, readreplicas ...DatabaseClient) *DB {
 }
 
 func TestExecQueriesMaster(t *testing.T) {
-	db, mastermock, _ := newMyDBMock(3)
-	mastermock.ExpectExec("UPDATE very_important_business_documents")
-
+	db, master, _ := newMyDBCounterMock(3)
 	_, _ = db.Exec("UPDATE very_important_business_documents")
-	if e := mastermock.ExpectationsWereMet(); e != nil {
-		t.Errorf("Failed :%s", e)
+	if master.GetExecCount() != 1 {
+		t.Errorf("Expected master to recieve 1 exec but it did not")
 		t.Fail()
 	}
 }
 
 func TestReadQueriesReplica0(t *testing.T) {
-	db, _, replicamocks := newMyDBMock(1)
-	replicamocks[0].ExpectQuery("SELECT plaintext_passwords")
+	db, _, replicas := newMyDBCounterMock(1)
 
 	_, _ = db.Query("SELECT plaintext_passwords")
-	if e := replicamocks[0].ExpectationsWereMet(); e != nil {
-		t.Errorf("Failed :%s", e)
+	if replicas[0].GetQueryCount() != 1 {
+		t.Errorf("Expected Replica 1 to recieve 1 query but it did not")
 		t.Fail()
 	}
 }
 
 func TestReadQueriesLoadBalance(t *testing.T) {
-	db, _, replicamocks := newMyDBMock(3)
-	for _, mocks := range replicamocks {
-		mocks.ExpectQuery("SELECT plaintext_passwords")
-	}
-	for range replicamocks {
+	db, _, replicas := newMyDBCounterMock(3)
+	for range replicas {
 		_, _ = db.Query("SELECT plaintext_passwords")
 	}
-	for i, mock := range replicamocks {
-		if e := mock.ExpectationsWereMet(); e != nil {
+	for i, mock := range replicas {
+		if mock.GetQueryCount() != 1 {
 			t.Errorf("Replica %d expected to receive a query but didn't.\n", i+1)
 			t.Fail()
 		}
@@ -98,26 +91,20 @@ func TestReadQueriesLoadBalance(t *testing.T) {
 }
 
 func TestLoadBalancingCycles(t *testing.T) {
-	db, _, replicamocks := newMyDBMock(3)
-	replicamocks[0].ExpectQuery("SELECT plaintext_passwords")
-	replicamocks[0].ExpectQuery("SELECT user_private_keys")
-	for range replicamocks {
+	db, _, replicas := newMyDBCounterMock(3)
+	for range replicas {
 		_, _ = db.Query("SELECT plaintext_passwords")
 	}
 	_, _ = db.Query("SELECT user_private_keys")
-	if e := replicamocks[0].ExpectationsWereMet(); e != nil {
-		t.Error("Replica 1 expected to receive 2 queries but recieved none.\n")
+	if replicas[0].GetQueryCount() != 2 {
+		t.Error("Replica 1 expected to receive 2 queries but didn't.\n")
 		t.FailNow()
 	}
 }
 
-func TestReadLoadBalancingIsThreadSafe(t *testing.T) {
+func TestReadLoadBalancingIsCoordinated(t *testing.T) {
 	replicact, expected := 5, 3
-	var counters []DatabaseClient
-	for i := 0; i < replicact; i++ {
-		counters = append(counters, testutil.NewQueryCounter())
-	}
-	db := newWithGeneric(&sql.DB{}, counters...)
+	db, _, replicas := newMyDBCounterMock(replicact)
 	var wg sync.WaitGroup
 	wg.Add(replicact * expected)
 	for i := 0; i < replicact*expected; i++ {
@@ -127,10 +114,9 @@ func TestReadLoadBalancingIsThreadSafe(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	for i, iface := range counters {
-		count := iface.(*testutil.QueryCounterDBMock)
-		if count.GetCount() != uint(expected) {
-			t.Errorf("Replica %d expected %d requests but recieved %d\n", i+1, expected, count.GetCount())
+	for i, mock := range replicas {
+		if mock.GetQueryCount() != uint(expected) {
+			t.Errorf("Replica %d expected %d requests but recieved %d\n", i+1, expected, mock.GetQueryCount())
 			t.Fail()
 		}
 	}
