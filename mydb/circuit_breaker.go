@@ -61,8 +61,12 @@ func (r *replicaCBDB) GetIfReady() *replicaCBDB {
 		go r.Ping()
 		r.skip = 0
 		return nil
+	} else if r.skip == 1 {
+		go r.Ping()
+		r.skip = 0
+	} else {
+		r.skip = 1
 	}
-	go r.Ping()
 	return nil
 }
 
