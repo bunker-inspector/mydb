@@ -44,6 +44,15 @@ type DBConfig struct {
 
 	// Threshold at at which circuit breakers will enter the open state
 	CBOpenThreshold uint
+
+	// Max number of attempts
+	MaxAttempts uint
+
+	// The rate at which the master retry wait times increase
+	// in the event of repeat failures.
+	// Will be 0 * x, 1 * x, ..., MaxAttempts-1 * x milliseconds
+	// where x is this value
+	MasterBackoffFactor time.Duration
 }
 
 type DB struct {
@@ -66,7 +75,9 @@ func New(master *sql.DB, readreplicas ...*sql.DB) *DB {
 	db := &DB{
 		master: newMasterCBDB(master),
 		config: DBConfig{
-			ConnectionTimeout: 5 * time.Second,
+			ConnectionTimeout:   5 * time.Second,
+			MasterBackoffFactor: 2000 * time.Millisecond,
+			MaxAttempts:         3,
 		},
 		replicas: convertedReplicas,
 	}
@@ -146,28 +157,67 @@ func (db *DB) PingContext(ctx context.Context) error {
 	return nil
 }
 
-func (db *DB) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	return db.readReplicaRoundRobin().Query(query, args...)
+func (db *DB) Query(query string, args ...interface{}) (rows *sql.Rows, err error) {
+	for i := 0; i < int(db.config.MaxAttempts); i++ {
+		rows, err = db.readReplicaRoundRobin().Query(query, args...)
+		if err == nil {
+			return rows, nil
+		}
+	}
+	return nil, err
 }
 
-func (db *DB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	return db.readReplicaRoundRobin().QueryContext(ctx, query, args...)
+func (db *DB) QueryContext(ctx context.Context, query string, args ...interface{}) (rows *sql.Rows, err error) {
+	for i := 0; i < int(db.config.MaxAttempts); i++ {
+		rows, err = db.readReplicaRoundRobin().QueryContext(ctx, query, args...)
+		if err == nil {
+			return rows, nil
+		}
+	}
+	return nil, err
+
 }
 
-func (db *DB) QueryRow(query string, args ...interface{}) *sql.Row {
-	return db.readReplicaRoundRobin().QueryRow(query, args...)
+func (db *DB) QueryRow(query string, args ...interface{}) (row *sql.Row) {
+	for i := 0; i < int(db.config.MaxAttempts); i++ {
+		row = db.readReplicaRoundRobin().QueryRow(query, args...)
+		if row.Err() == nil {
+			return row
+		}
+	}
+	return row
 }
 
-func (db *DB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	return db.readReplicaRoundRobin().QueryRowContext(ctx, query, args...)
+func (db *DB) QueryRowContext(ctx context.Context, query string, args ...interface{}) (row *sql.Row) {
+	for i := 0; i < int(db.config.MaxAttempts); i++ {
+		row = db.readReplicaRoundRobin().QueryRowContext(ctx, query, args...)
+		if row.Err() == nil {
+			return row
+		}
+	}
+	return row
 }
 
-func (db *DB) Begin() (*sql.Tx, error) {
-	return db.master.Begin()
+func (db *DB) Begin() (tx *sql.Tx, err error) {
+	for i := 0; i < int(db.config.MaxAttempts); i++ {
+		tx, err = db.master.Begin()
+		if err == nil {
+			return tx, nil
+		}
+		time.Sleep(time.Duration(i) * db.config.MasterBackoffFactor)
+	}
+	return nil, err
 }
 
-func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
-	return db.master.BeginTx(ctx, opts)
+func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (tx *sql.Tx, err error) {
+	for i := 0; i < int(db.config.MaxAttempts); i++ {
+		tx, err = db.master.BeginTx(ctx, opts)
+		if err == nil {
+			return tx, nil
+		}
+		time.Sleep(time.Duration(i) * db.config.MasterBackoffFactor)
+	}
+	return nil, err
 }
 
 func (db *DB) Close() error {
@@ -178,20 +228,48 @@ func (db *DB) Close() error {
 	return nil
 }
 
-func (db *DB) Exec(query string, args ...interface{}) (sql.Result, error) {
-	return db.master.Exec(query, args...)
+func (db *DB) Exec(query string, args ...interface{}) (res sql.Result, err error) {
+	for i := 0; i < int(db.config.MaxAttempts); i++ {
+		res, err = db.master.Exec(query, args...)
+		if err == nil {
+			return res, nil
+		}
+		time.Sleep(time.Duration(i) * db.config.MasterBackoffFactor)
+	}
+	return nil, err
 }
 
-func (db *DB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	return db.master.ExecContext(ctx, query, args...)
+func (db *DB) ExecContext(ctx context.Context, query string, args ...interface{}) (res sql.Result, err error) {
+	for i := 0; i < int(db.config.MaxAttempts); i++ {
+		res, err = db.master.ExecContext(ctx, query, args...)
+		if err == nil {
+			return res, nil
+		}
+		time.Sleep(time.Duration(i) * db.config.MasterBackoffFactor)
+	}
+	return nil, err
 }
 
-func (db *DB) Prepare(query string) (*sql.Stmt, error) {
-	return db.master.Prepare(query)
+func (db *DB) Prepare(query string) (stmt *sql.Stmt, err error) {
+	for i := 0; i < int(db.config.MaxAttempts); i++ {
+		stmt, err = db.master.Prepare(query)
+		if err == nil {
+			return stmt, nil
+		}
+		time.Sleep(time.Duration(i) * db.config.MasterBackoffFactor)
+	}
+	return nil, err
 }
 
-func (db *DB) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
-	return db.master.PrepareContext(ctx, query)
+func (db *DB) PrepareContext(ctx context.Context, query string) (stmt *sql.Stmt, err error) {
+	for i := 0; i < int(db.config.MaxAttempts); i++ {
+		stmt, err = db.master.PrepareContext(ctx, query)
+		if err == nil {
+			return stmt, nil
+		}
+		time.Sleep(time.Duration(i) * db.config.MasterBackoffFactor)
+	}
+	return nil, err
 }
 
 func (db *DB) SetConnMaxLifetime(d time.Duration) {

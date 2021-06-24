@@ -73,6 +73,12 @@ func (t *StatusTracker) Status() CircuitBreakerStatus {
 	return t.status
 }
 
+func (t *StatusTracker) SetThresholds(halfopen uint, open uint) {
+	t.halfOpenThreshold = halfopen
+	t.openThreshold = open
+	t.UpdateStatus()
+}
+
 func (t *StatusTracker) SetWindowSize(size int) {
 	t.mux.Lock()
 	defer t.mux.Unlock()

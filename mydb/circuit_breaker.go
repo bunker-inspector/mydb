@@ -3,6 +3,7 @@ package mydb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
 	"time"
 
@@ -37,10 +38,12 @@ func newReplicaCBDB(db DatabaseClient) *replicaCBDB {
 
 func (m *masterCBDB) ApplyConfig(config DBConfig) {
 	m.tracker.SetWindowSize(int(config.CBResultWindowSize))
+	m.tracker.SetThresholds(config.CBHalfOpenThreshold, config.CBOpenThreshold)
 }
 
 func (r *replicaCBDB) ApplyConfig(config DBConfig) {
 	r.tracker.SetWindowSize(int(config.CBResultWindowSize))
+	r.tracker.SetThresholds(config.CBHalfOpenThreshold, config.CBOpenThreshold)
 }
 
 // GetIfReady will return a reference to a Circuit Breaking clients if if it is closed
@@ -192,15 +195,11 @@ func (r *replicaCBDB) QueryRowContext(ctx context.Context, query string, args ..
 }
 
 func (r *replicaCBDB) Begin() (*sql.Tx, error) {
-	tx, e := r.db.Begin()
-	r.tracker.ReportResult(e == nil)
-	return tx, e
+	return nil, errors.New("Replicas cannot perform write operations. Please check your configuration.")
 }
 
 func (r *replicaCBDB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
-	tx, e := r.db.BeginTx(ctx, opts)
-	r.tracker.ReportResult(e == nil)
-	return tx, e
+	return nil, errors.New("Replicas cannot perform write operations. Please check your configuration.")
 }
 
 func (r *replicaCBDB) Close() error {
@@ -208,27 +207,19 @@ func (r *replicaCBDB) Close() error {
 }
 
 func (r *replicaCBDB) Exec(query string, args ...interface{}) (sql.Result, error) {
-	result, e := r.db.Exec(query, args...)
-	r.tracker.ReportResult(e == nil)
-	return result, e
+	return nil, errors.New("Replicas cannot perform write operations. Please check your configuration.")
 }
 
 func (r *replicaCBDB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	result, e := r.db.ExecContext(ctx, query, args...)
-	r.tracker.ReportResult(e == nil)
-	return result, e
+	return nil, errors.New("Replicas cannot perform write operations. Please check your configuration.")
 }
 
 func (r *replicaCBDB) Prepare(query string) (*sql.Stmt, error) {
-	stmt, e := r.db.Prepare(query)
-	r.tracker.ReportResult(e == nil)
-	return stmt, e
+	return nil, errors.New("Replicas cannot perform write operations. Please check your configuration.")
 }
 
 func (r *replicaCBDB) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
-	stmt, e := r.db.PrepareContext(ctx, query)
-	r.tracker.ReportResult(e == nil)
-	return stmt, e
+	return nil, errors.New("Replicas cannot perform write operations. Please check your configuration.")
 }
 
 func (r *replicaCBDB) SetConnMaxLifetime(d time.Duration) {
