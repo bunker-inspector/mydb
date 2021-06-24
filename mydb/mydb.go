@@ -32,6 +32,8 @@ type DatabaseClient interface {
 	SetMaxOpenConns(n int)
 }
 
+// The DB config provides options for configuring the circuit breaking behavior
+// and the master instance backoff parameters
 type DBConfig struct {
 	// How many events a circuit breaker will keep in its result history
 	// to determine its status
@@ -53,6 +55,7 @@ type DBConfig struct {
 	MasterBackoffFactor time.Duration
 }
 
+// DB is the facade that manages load balancing reads and retries
 type DB struct {
 	master       *masterCBDB
 	replicas     []*replicaCBDB
@@ -103,6 +106,8 @@ func (db *DB) ApplyConfig(config DBConfig) error {
 	return nil
 }
 
+// readReplicaRoundRobin will attempt to select the first read replica to report itself
+// as available. If none are found, the master instance will be selected
 func (db *DB) readReplicaRoundRobin() DatabaseClient {
 	db.replicamutex.Lock()
 	defer db.replicamutex.Unlock()
