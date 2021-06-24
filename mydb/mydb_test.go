@@ -56,7 +56,6 @@ func newWithGeneric(master DatabaseClient, readreplicas ...DatabaseClient) *DB {
 	db := &DB{
 		master: newMasterCBDB(master),
 		config: DBConfig{
-			ConnectionTimeout:   5 * time.Second,
 			MasterBackoffFactor: 2000 * time.Millisecond,
 			MaxAttempts:         3,
 		},

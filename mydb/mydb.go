@@ -33,8 +33,6 @@ type DatabaseClient interface {
 }
 
 type DBConfig struct {
-	ConnectionTimeout time.Duration
-
 	// How many events a circuit breaker will keep in its result history
 	// to determine its status
 	CBResultWindowSize uint
@@ -75,7 +73,6 @@ func New(master *sql.DB, readreplicas ...*sql.DB) *DB {
 	db := &DB{
 		master: newMasterCBDB(master),
 		config: DBConfig{
-			ConnectionTimeout:   5 * time.Second,
 			MasterBackoffFactor: 2000 * time.Millisecond,
 			MaxAttempts:         3,
 		},
