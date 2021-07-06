@@ -1,4 +1,4 @@
-module github.com/m-rec/08647c57124934494b415428d23b56b52f043339
+module github.com/bunker-inspector/mydb
 
 go 1.15
 

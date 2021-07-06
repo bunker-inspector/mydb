@@ -64,10 +64,6 @@ type DB struct {
 }
 
 func New(master *sql.DB, readreplicas ...*sql.DB) *DB {
-	// The motivation for the following is that in real world cases, a sql.DB would be supplied
-	// and we want to prove that check at compile time, which the go compiler would not allow
-	// were it defined as []DatabaseClient but we want to be able to apply simple mocks for
-	// testing and in the scope of this library, we aren't interested in the actual backend
 	var convertedReplicas []*replicaCBDB
 	for _, replica := range readreplicas {
 		asCircuitBreaker := newReplicaCBDB(replica)

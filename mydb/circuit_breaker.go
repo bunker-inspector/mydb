@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/m-rec/08647c57124934494b415428d23b56b52f043339/statustracker"
+	"github.com/bunker-inspector/mydb/statustracker"
 )
 
 // masterCBDB is a circuit breaking DatabaseClient
